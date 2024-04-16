@@ -41,11 +41,7 @@ k_priorMean = jnp.log(350.0)
 x0_priorMean = jnp.log(0.56)
 params_std = 0.5
 net_std = 2.0
-param_priors_dict = {
-    "c_prior": dist.Normal(c_priorMean, params_std),
-    "k_prior": dist.Normal(k_priorMean, params_std),
-    "x0_prior": dist.Normal(x0_priorMean, params_std),
-}
+prior_params = (c_priorMean, k_priorMean, x0_priorMean, params_std)
 
 ## Process Data
 data = np.loadtxt('data/covid_world.dat')
@@ -59,17 +55,46 @@ smooth_cases = jnp.array(smooth_cases).reshape(-1, 1)
 
 def bpinn(X, Y, width, net_std):
 
-    return pm.bnn(X, Y, width, net_std)
-#     # # output of physics
-#     # phys_pred = smd_dynamics(X, Y, [c_priorMean, k_priorMean, x0_priorMean])
-#     # numpyro.sample("obs", dist.Normal(bnn_pred, obs_std*jnp.ones_like(bnn_pred)), obs=Y)
-#     # numpyro.sample("phys", dist.Normal(jnp.zeros_like([num_collocation, 1]), phys_std), obs=Y)
+    N, D_X = X.shape
+    # traditional BNN prediction
+    zf = pm.bnn(X, Y, width, net_std)
+
+    # log-normal priors on physics parameters
+    log_c = numpyro.sample("log_c", dist.Normal(c_priorMean, params_std))
+    log_k = numpyro.sample("log_k", dist.Normal(k_priorMean, params_std))
+    log_x0 = numpyro.sample("log_x0", dist.Normal(x0_priorMean, params_std))
+    c = jnp.exp(log_c)
+    k = jnp.exp(log_k)
+    x0 = jnp.exp(log_x0)
+
+    ## Holdover from original code, may need it
+    raw_prior_obs = numpyro.sample("prior_obs", dist.Normal(0.0, 1.0))
+    prec_obs = raw_prior_obs ** 2
+    sigma_obs = 1.0 / jnp.sqrt(prec_obs)
+
+    # observe data
+    with numpyro.plate("data", N):
+        numpyro.sample("Y", dist.Normal(zf, sigma_obs).to_event(1), obs=Y)
+
 
 rng_key, rng_key_predict = jr.split(jr.PRNGKey(0))
 print(train_x.shape, train_y.shape)
-samples = pm.run_NUTS(bpinn, rng_key, train_x, train_y, width, net_std,
-                                    num_chains=num_chains, num_warmup=num_warmup, num_samples=num_samples)
+samples = pm.run_NUTS(bpinn, 
+                      rng_key, 
+                      train_x, 
+                      train_y, 
+                      width, 
+                      net_std, 
+                      num_chains=num_chains, 
+                      num_warmup=num_warmup, 
+                      num_samples=num_samples)
 print('Samples taken!')
 vmap_args = (samples, jr.split(rng_key_predict, num_samples * num_chains))
-predictions = vmap(lambda samples, key: pm.bnn_predict(bpinn, key, samples, train_x, width, net_std))(*vmap_args)
+predictions = vmap(lambda samples, key: pm.bnn_predict(bpinn, 
+                                                       key, 
+                                                       samples, 
+                                                       train_x, 
+                                                       width, 
+                                                       net_std
+                                                       ))(*vmap_args)
 mean_pred = jnp.mean(predictions, axis=0)

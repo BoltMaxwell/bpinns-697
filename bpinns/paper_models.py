@@ -53,13 +53,7 @@ def bnn(X, Y, width=32, net_std=2.0, D_Y=1,):
     if Y is not None:
         assert zf.shape == Y.shape
 
-    raw_prior_obs = numpyro.sample("prior_obs", dist.Normal(0.0, 1.0))
-    prec_obs = raw_prior_obs ** 2
-    sigma_obs = 1.0 / jnp.sqrt(prec_obs)
-
-    # observe data
-    with numpyro.plate("data", N):
-        numpyro.sample("Y", dist.Normal(zf, sigma_obs).to_event(1), obs=Y)
+    return zf
 
 
 # helper function for HMC inference
