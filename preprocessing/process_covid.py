@@ -39,4 +39,8 @@ def process_covid_data(data, start_day, end_day):
     cases = data[start_day:end_day, 1]
     smooth_cases = data_smoother(cases)
 
+    time = jnp.array(time).reshape(-1, 1)
+    cases = jnp.array(cases).reshape(-1, 1)
+    smooth_cases = jnp.array(smooth_cases).reshape(-1, 1)
+
     return time, cases, smooth_cases

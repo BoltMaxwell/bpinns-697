@@ -9,7 +9,7 @@ Author: Maxwell Bolt
 __all__ = ['smd_dynamics']
 
 # Import required packages
-from jax import grad
+from jax import grad, vmap
 
 def smd_dynamics(t, fn, params):
     """ODE function for the spring-mass-damper system.
@@ -17,16 +17,19 @@ def smd_dynamics(t, fn, params):
     Used for Covid cases model.
     Args:
         t: time
-        fn: function
+        fn: function is BNN
         params: constants governing the system
     Returns:
         f: function
 
     """
     c, k, b = params
-    x = fn(t)
-    x_t = grad(fn)(t)
-    x_tt = grad(grad(fn))(t)
+    fn_vmap = vmap(fn, in_axes=0)
+    fn_grad = vmap(grad(fn), in_axes=0)
+    fn_hess = vmap(grad(grad(fn)), in_axes=0)
+    x = fn_vmap(t)
+    x_t = fn_grad(t)
+    x_tt = fn_hess(t)
     f = 1/k * x_tt + c/k * x_t + x - b
 
     return f

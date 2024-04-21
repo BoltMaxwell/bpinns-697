@@ -27,15 +27,14 @@ import bpinns.paper_models as pm
 
 ## Hyperparameters
 width = 32
-data_std = 0.1
-phys_std = 0.1
-obs_std = 0.05
 num_collocation = 1000
 num_chains = 1
-num_warmup = 300
+num_warmup = 50
 num_samples = 100
 
 # priors
+phys_std = 0.05
+data_std = 0.05
 c_priorMean = jnp.log(2.2)
 k_priorMean = jnp.log(350.0)
 x0_priorMean = jnp.log(0.56)
@@ -48,16 +47,29 @@ data = np.loadtxt('data/covid_world.dat')
 # This is the data that the original code uses for 2021
 start_day = 350
 end_day = 700
-train_x, train_y, smooth_cases = process_covid_data(data, start_day, end_day)
-train_x = jnp.array(train_x).reshape(-1, 1)
-train_y = jnp.array(train_y).reshape(-1, 1)
-smooth_cases = jnp.array(smooth_cases).reshape(-1, 1)
+time, cases, smooth_cases = process_covid_data(data, start_day, end_day)
 
-def bpinn(X, Y, width, net_std):
+# ONCE OPERATIONAL: WE WILL SPLIT TO TRAIN AND TEST
+train_t = time
+train_x = cases
+# normalize 
+s_train_t = train_t / jnp.max(train_t)
+train_x_mean = jnp.mean(train_x)
+train_x_std = jnp.std(train_x)
+s_train_x = (train_x - train_x_mean) / train_x_std
+
+def bpinn(X, Y, width, net_std, data_std, phys_std, num_collocation):
 
     N, D_X = X.shape
-    # traditional BNN prediction
-    zf = pm.bnn(X, Y, width, net_std)
+
+    w1, b1, w2, b2, wf, bf = pm.sample_weights(width=width, net_std=net_std)
+    net_params = (w1, b1, w2, b2, wf, bf)
+
+    X = X.squeeze()
+
+    bnn = partial(pm.bnn, net_params=net_params)
+    bnn_vmap = vmap(bnn, in_axes=0)
+    data_pred = bnn_vmap(X)
 
     # log-normal priors on physics parameters
     log_c = numpyro.sample("log_c", dist.Normal(c_priorMean, params_std))
@@ -66,25 +78,33 @@ def bpinn(X, Y, width, net_std):
     c = jnp.exp(log_c)
     k = jnp.exp(log_k)
     x0 = jnp.exp(log_x0)
-
-    ## Holdover from original code, may need it
-    raw_prior_obs = numpyro.sample("prior_obs", dist.Normal(0.0, 1.0))
-    prec_obs = raw_prior_obs ** 2
-    sigma_obs = 1.0 / jnp.sqrt(prec_obs)
-
+    # The BNN is the function that is the second argument to the dynamics function
+    phys_pred = smd_dynamics(X, bnn, (c, k, x0))
+    
     # observe data
     with numpyro.plate("data", N):
-        numpyro.sample("Y", dist.Normal(zf, sigma_obs).to_event(1), obs=Y)
+        numpyro.sample("Y", dist.Normal(data_pred, data_std).to_event(1), obs=Y)
+
+    # observe physics
+    with numpyro.plate("physics", num_collocation):
+        numpyro.sample("phys", dist.Normal(phys_pred, phys_std).to_event(1), obs=0)
+
+    # observe physics use numpyro.factor?
 
 
 rng_key, rng_key_predict = jr.split(jr.PRNGKey(0))
-print(train_x.shape, train_y.shape)
+print(s_train_t.shape, s_train_x.shape)
+# If you run into num_chains issue being given too many arguments,
+# its because you have to go change the arguements it takes in paper_models.py
 samples = pm.run_NUTS(bpinn, 
                       rng_key, 
-                      train_x, 
-                      train_y, 
+                      s_train_t, 
+                      s_train_x, 
                       width, 
-                      net_std, 
+                      net_std,
+                      data_std,
+                      phys_std,
+                      num_collocation,
                       num_chains=num_chains, 
                       num_warmup=num_warmup, 
                       num_samples=num_samples)
@@ -93,8 +113,25 @@ vmap_args = (samples, jr.split(rng_key_predict, num_samples * num_chains))
 predictions = vmap(lambda samples, key: pm.bnn_predict(bpinn, 
                                                        key, 
                                                        samples, 
-                                                       train_x, 
+                                                       s_train_t, 
                                                        width, 
-                                                       net_std
+                                                       net_std,
+                                                       data_std,
+                                                       phys_std,
+                                                       num_collocation
                                                        ))(*vmap_args)
+# save the predictions
+np.save('data/predictions.npy', predictions)
 mean_pred = jnp.mean(predictions, axis=0)
+pred_y = mean_pred * train_x_std + train_x_mean
+print(predictions.shape)
+print(pred_y.shape)
+
+# Plot the results
+plt.figure(figsize=(12, 6))
+plt.plot(train_t, train_x, 'ro', label='Data')
+plt.plot(train_t, smooth_cases, 'g-', label='Smoothed Data')
+plt.plot(train_t, pred_y, 'b-', label='Prediction')
+plt.legend()
+sns.despine(trim=True)
+plt.show()
