@@ -29,7 +29,7 @@ import bpinns.paper_models as pm
 width = 32
 num_collocation = 1000
 num_chains = 1
-num_warmup = 50
+num_warmup = 100
 num_samples = 100
 
 # priors
@@ -52,20 +52,27 @@ time, cases, smooth_cases = process_covid_data(data, start_day, end_day)
 # ONCE OPERATIONAL: WE WILL SPLIT TO TRAIN AND TEST
 train_t = time
 train_x = cases
+collocation_pts = jnp.linspace(min(train_t), max(train_t), num_collocation)
+
 # normalize 
 s_train_t = train_t / jnp.max(train_t)
 train_x_mean = jnp.mean(train_x)
 train_x_std = jnp.std(train_x)
 s_train_x = (train_x - train_x_mean) / train_x_std
+collocation_pts = collocation_pts / jnp.max(train_t)
 
-def bpinn(X, Y, width, net_std, data_std, phys_std, num_collocation):
+def bpinn(X, Y, width, net_std, data_std, phys_std, collocation_pts):
 
     N, D_X = X.shape
+    num_collocation = collocation_pts.shape[0]
+
+    print(collocation_pts.shape)
 
     w1, b1, w2, b2, wf, bf = pm.sample_weights(width=width, net_std=net_std)
     net_params = (w1, b1, w2, b2, wf, bf)
 
     X = X.squeeze()
+    collocation_pts = collocation_pts.squeeze()
 
     bnn = partial(pm.bnn, net_params=net_params)
     bnn_vmap = vmap(bnn, in_axes=0)
@@ -79,7 +86,11 @@ def bpinn(X, Y, width, net_std, data_std, phys_std, num_collocation):
     k = jnp.exp(log_k)
     x0 = jnp.exp(log_x0)
     # The BNN is the function that is the second argument to the dynamics function
-    phys_pred = smd_dynamics(X, bnn, (c, k, x0))
+    phys_pred = smd_dynamics(collocation_pts, bnn, (c, k, x0))
+    
+    # add dimension to data_pred
+    data_pred = jnp.expand_dims(data_pred, 1)
+    phys_pred = jnp.expand_dims(phys_pred, 1)
     
     # observe data
     with numpyro.plate("data", N):
@@ -93,9 +104,7 @@ def bpinn(X, Y, width, net_std, data_std, phys_std, num_collocation):
 
 
 rng_key, rng_key_predict = jr.split(jr.PRNGKey(0))
-print(s_train_t.shape, s_train_x.shape)
-# If you run into num_chains issue being given too many arguments,
-# its because you have to go change the arguements it takes in paper_models.py
+
 samples = pm.run_NUTS(bpinn, 
                       rng_key, 
                       s_train_t, 
@@ -104,7 +113,7 @@ samples = pm.run_NUTS(bpinn,
                       net_std,
                       data_std,
                       phys_std,
-                      num_collocation,
+                      collocation_pts,
                       num_chains=num_chains, 
                       num_warmup=num_warmup, 
                       num_samples=num_samples)
@@ -118,14 +127,13 @@ predictions = vmap(lambda samples, key: pm.bnn_predict(bpinn,
                                                        net_std,
                                                        data_std,
                                                        phys_std,
-                                                       num_collocation
+                                                       collocation_pts
                                                        ))(*vmap_args)
 # save the predictions
-np.save('data/predictions.npy', predictions)
+np.save('results/predictions.npy', predictions)
+# jnp.save('results/samples.npz', samples)
 mean_pred = jnp.mean(predictions, axis=0)
 pred_y = mean_pred * train_x_std + train_x_mean
-print(predictions.shape)
-print(pred_y.shape)
 
 # Plot the results
 plt.figure(figsize=(12, 6))

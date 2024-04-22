@@ -49,7 +49,7 @@ def sample_weights(width=32, net_std=2.0):
     return w1, b1, w2, b2, wf, bf
 
 # helper function for HMC inference
-def run_NUTS(model, rng_key, X, Y, width, net_std, data_std, phys_std, num_collocation,
+def run_NUTS(model, rng_key, X, Y, width, net_std, data_std, phys_std, collocation_pts,
              num_chains=1, num_warmup=1000, num_samples=1000):
     """
     runs NUTS on the numpyro model
@@ -63,12 +63,12 @@ def run_NUTS(model, rng_key, X, Y, width, net_std, data_std, phys_std, num_collo
         num_chains=num_chains,
         progress_bar=False if "NUMPYRO_SPHINXBUILD" in os.environ else True,
     )
-    mcmc.run(rng_key, X, Y, width, net_std, data_std, phys_std, num_collocation)
+    mcmc.run(rng_key, X, Y, width, net_std, data_std, phys_std, collocation_pts)
     print("\nMCMC elapsed time:", time.time() - start)
     return mcmc.get_samples()
 
 # helper function for prediction
-def bnn_predict(model, rng_key, samples, X, width, net_std, data_std, phys_std, num_collocation):
+def bnn_predict(model, rng_key, samples, X, width, net_std, data_std, phys_std, collocation_pts):
     """
     Predicts the output of the model given samples from the posterior.
     """
@@ -79,8 +79,24 @@ def bnn_predict(model, rng_key, samples, X, width, net_std, data_std, phys_std, 
                                                   net_std=net_std, 
                                                   data_std=data_std,
                                                   phys_std=phys_std,
-                                                  num_collocation=num_collocation)
+                                                  collocation_pts=collocation_pts)
 
     ## I THNK WE WILL ADD LINES HERE TO SAMPLE THE PHYSICS PARAMETERS
-
     return model_trace["Y"]["value"]
+
+# helper function for prediction
+def bnn_infer(model, rng_key, samples, X, width, net_std, data_std, phys_std, collocation_pts):
+    """
+    Infers the physcs parameters of the model given samples from the posterior.
+    """
+    model = handlers.substitute(handlers.seed(model, rng_key), samples)
+    # note that Y will be sampled in the model because we pass Y=None here
+    model_trace = handlers.trace(model).get_trace(X=X, Y=None, 
+                                                  width=width, 
+                                                  net_std=net_std, 
+                                                  data_std=data_std,
+                                                  phys_std=phys_std,
+                                                  collocation_pts=collocation_pts)
+
+    ## I THNK WE WILL ADD LINES HERE TO SAMPLE THE PHYSICS PARAMETERS
+    return model_trace["log_c"]["value"], model_trace["log_k"]["value"], model_trace["log_x0"]["value"]
