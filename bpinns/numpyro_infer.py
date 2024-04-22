@@ -88,15 +88,12 @@ def bpinn_inferPhysics(model,
     """
     model = handlers.substitute(handlers.seed(model, rng_key), samples)
     # note that Y will be sampled in the model because we pass Y=None here
-    model_trace = handlers.trace(model).get_trace(X=X, Y=None,
+    model_trace = handlers.trace(model).get_trace(X=X, 
+                                                  Y=None,
                                                   dynamics=dynamics, 
                                                   width=width,
                                                   collocation_pts=collocation_pts,
                                                   prior_params=prior_params,
                                                   likelihood_params=likelihood_params)
-    
-    log_c = model_trace["log_c"]["value"]
-    log_k = model_trace["log_k"]["value"]
-    log_x0 = model_trace["log_x0"]["value"]
 
-    return jnp.exp(log_c), jnp.exp(log_k), jnp.exp(log_x0)
+    return model_trace["log_c"]["value"]
