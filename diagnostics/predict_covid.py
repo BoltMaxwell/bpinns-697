@@ -78,13 +78,22 @@ predictions = vmap(lambda samples, key: infer.bpinn_predict(models.bpinn,
 
 mean_pred = jnp.mean(predictions, axis=0)
 pred_y = mean_pred * train_x_std + train_x_mean
-
+pred_std = jnp.std(predictions, axis=0) * train_x_std
+lower = pred_y - 1.96 * pred_std
+upper = pred_y + 1.96 * pred_std
+train_t = train_t.squeeze()
+lower = lower.squeeze()
+upper = upper.squeeze()
+print(lower.shape)
 
 # Plot the results
 plt.figure(figsize=(12, 6))
 plt.plot(train_t, train_x, 'ro', label='Data')
 plt.plot(train_t, smooth_cases, 'g-', label='Smoothed Data')
 plt.plot(train_t, pred_y, 'b-', label='Prediction')
+plt.fill_between(train_t, lower, upper, color='b', alpha=0.2)
+plt.xlabel('Time (days)')
+plt.ylabel('Cases')
 plt.legend()
 sns.despine(trim=True)
 plt.show()

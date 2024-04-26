@@ -23,8 +23,8 @@ import bpinns.numpyro_models as models
 width = 32
 num_collocation = 1000
 num_chains = 1
-num_warmup = 100
-num_samples = 100
+num_warmup = 1000
+num_samples = 1000
 
 # Model Parameters
 phys_std = 0.05
@@ -82,9 +82,8 @@ hyperparams = {'width': width,
                'likelihood_params': likelihood_params}
 
 # save hyperparams and samples
-np.save('results/model_hyperparams', hyperparams)
-with open('results/samples.pkl', 'wb') as f:
+np.save('results/numpyro_hyperparams', hyperparams)
+with open('results/numpyro_samples.pkl', 'wb') as f:
     pickle.dump(samples, f)
 
 print('Saved hyperparameters and samples to results/')
-

@@ -61,10 +61,8 @@ def bpinn(X,
 
     N = X.shape[0]
     num_collocation = collocation_pts.shape[0]
-
     c_priorMean, k_priorMean, x0_priorMean, params_std, net_std = prior_params
     data_std, phys_std = likelihood_params
-
 
     w1, b1, w2, b2, wf, bf = sample_weights(width=width, net_std=net_std)
     net_params = (w1, b1, w2, b2, wf, bf)
@@ -94,11 +92,11 @@ def bpinn(X,
     with numpyro.plate("data", N):
         numpyro.sample("Y", dist.Normal(data_pred, data_std).to_event(1), obs=Y)
 
-    # observe physics
+    # I think the plate is wrong.
+    # observe physics use numpyro.factor, which is equivalent to multiplying the likelihood
     with numpyro.plate("physics", num_collocation):
         numpyro.sample("phys", dist.Normal(phys_pred, phys_std).to_event(1), obs=0)
 
-    # observe physics use numpyro.factor?
 
 # helper function for HMC inference
 def run_NUTS(model, 
