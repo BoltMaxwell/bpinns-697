@@ -1,6 +1,6 @@
 """
 Trains a Bayesian Physics Informed Neural Network on COVID-19 data.
-The model is built using Numpyro and JAX.
+The model is built using Numpyro.
 The physics governing the dynamics of the system is a spring-mass-damper system.
 
 Author: Maxwell Bolt

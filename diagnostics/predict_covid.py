@@ -23,7 +23,7 @@ import blackjax
 from bpinns.dynamics import smd_dynamics
 from preprocessing.process_covid import process_covid_data
 import bpinns.numpyro_models as models
-import bpinns.numpyro_infer as infer
+import bpinns.numpyro_predict as infer
 
 ## Hyperparameters
 hyperparams = np.load('results/model_hyperparams.npy', allow_pickle=True)

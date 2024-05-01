@@ -10,3 +10,5 @@ Author: Maxwell Bolt
 """
 
 from .dynamics import *
+from .numpyro_models import *
+from .numpyro_predict import *
