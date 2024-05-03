@@ -14,7 +14,6 @@ Author: Maxwell Bolt
 import sys
 sys.path.append('.')
 import numpy as np
-import seaborn as sns
 import pickle
 from functools import partial
 
@@ -132,7 +131,7 @@ def data_like(position, batch):
     # square residual loss (0.05 is the data std)
     return -0.5*N*jnp.mean((vphi(t)-x)**2, axis=(0, 1))/(2*0.05)
 
-# physcs likelihood
+# physcs likelihood - this is where my current bug is
 def phys_like(position, batch):
     theta = position[0]
     N = batch.shape[0]
@@ -199,10 +198,12 @@ def run_sgld(log_prob, dataloader, key):
     
     return sgld_update, init
 
+# Set SGLD hyperparams
 key, subkey = jr.split(jr.PRNGKey(0))
 max_iter = 1000
 thinning_factor = 10
 
+# Run SGLD
 post_sgld_scan, init = run_sgld(log_prob, 
                                 partial(dataloader, data_size=10, colloc_size=10), 
                                 subkey)
@@ -217,7 +218,7 @@ hyperparams = {'width': width,
 
 # save hyperparams and samples
 np.save('results/blackjax_hyperparams', hyperparams)
-# with open('results/blackjax_samples.pkl', 'wb') as f:
-#     pickle.dump(samples, f)
+with open('results/blackjax_samples.pkl', 'wb') as f:
+    pickle.dump(posterior_samples, f)
 
-# print('Saved hyperparameters and samples to results/')
+print('Saved hyperparameters and samples to results/')
