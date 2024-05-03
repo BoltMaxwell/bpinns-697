@@ -96,7 +96,8 @@ plt.xlabel('Time (days)')
 plt.ylabel('Cases')
 plt.legend()
 sns.despine(trim=True)
-plt.show()
+plt.savefig('results/cases_prediction.png') 
+plt.close()
 
 params = [log_k, log_c, log_x0]
 titles = ['Spring Constant', 'Damping Constant', 'Initial Position']
@@ -111,7 +112,8 @@ for i, (param, title) in enumerate(zip(params, titles)):
     plt.title(f'{title}: {jnp.exp(jnp.mean(param)):.2f}')
 
 plt.tight_layout()
-plt.show()
+plt.savefig('results/parameter_histograms.png')  # Save the plot
+plt.close()
 
 
 

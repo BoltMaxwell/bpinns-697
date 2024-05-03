@@ -27,8 +27,11 @@ def smd_dynamics(t, fn, params):
     fn_vmap = vmap(fn, in_axes=0)
     fn_grad = vmap(grad(fn), in_axes=0)
     fn_hess = vmap(grad(grad(fn)), in_axes=0)
+    print(t.shape)
     x = fn_vmap(t)
+    print(x.shape)
     x_t = fn_grad(t)
+    print(x_t.shape)
     x_tt = fn_hess(t)
     f = 1/k * x_tt + c/k * x_t + x - b
 

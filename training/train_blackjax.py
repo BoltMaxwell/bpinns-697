@@ -48,7 +48,7 @@ k_priorMean = jnp.log(350.0)
 x0_priorMean = jnp.log(0.56)
 params_std = 0.5
 net_std = 2.0
-phys_params = (c_priorMean, k_priorMean, x0_priorMean, params_std)
+phys_init = (c_priorMean, k_priorMean, x0_priorMean, params_std)
 likelihood_params = (data_std, phys_std)
 
 ## Process Data
@@ -75,14 +75,15 @@ def sample_collocation(batch_size, key):
     return jr.uniform(key, (batch_size, 1), minval=bounds[0], maxval=bounds[1])
 
 def sample_data(batch_size, key):
-    indices = jr.randit(key, (batch_size,), minval=bounds[0], maxval=bounds[1])
-    return jtu.tree_map(lambda x: x[indices], (s_train_t, s_train_x))
+    data = (s_train_t, s_train_x)
+    indices = jr.randint(key, (batch_size,), minval=bounds[0], maxval=bounds[1])
+    return jtu.tree_map(lambda x: x[indices], data)
 
-def dataloader(data_batch_size, collocation_batch_size, key):
+def dataloader(data_size, colloc_size, key):
     key, subkey = jr.split(key)
-    return Batch(
-        data=sample_data(data_batch_size, subkey),
-        collocation=sample_collocation(collocation_batch_size, key))
+    data=sample_data(data_size, subkey),
+    collocation=sample_collocation(colloc_size, key)
+    return Batch(data, collocation)
 
 
 rng_key, rng_key_predict = jr.split(jr.PRNGKey(0))
@@ -98,39 +99,76 @@ mlp = eqx.nn.MLP(in_size=s_train_t.shape[1],
 # here is where we would add Fourier features
 model = mlp
 
-# model_diff = eqx.filter(model, eqx.is_array)
-init_theta, static = eqx.partition(model, eqx.is_array)
+theta_init, static = eqx.partition(model, eqx.is_array)
 
 ## DEFINE LOG PROBABILITIES
 # mlp prior
 def mlp_prior(position):
-    # this thetas needs to be checked to make sure its what we think it is
-    thetas = position[0]
-    flattree = jnp.array(jax.flatten_util.ravel_pytree(thetas)[0])
+    theta = position[0]
+    flattree = jnp.array(jax.flatten_util.ravel_pytree(theta)[0])
     return - 0.5 * jnp.linalg.norm(flattree) ** 2
 
 # physics param prior
-def param_prior(position):
-
+def phys_prior(position):
     phys_params = position[1]
-    # need to verify phys params are being called correctly
-    phys_prior = jax.scipy.stats.norm.pdf(phys_params) # defaults to mean 1
+    # this is ugly
+    log_c = phys_params[0]
+    log_k = phys_params[1]
+    log_x0 = phys_params[2]
+    params_std = phys_params[3]
+    c_prior = jax.scipy.stats.norm.pdf(log_c, params_std)
+    k_prior = jax.scipy.stats.norm.pdf(log_k, params_std)
+    x0_prior = jax.scipy.stats.norm.pdf(log_x0, params_std)
 
-    return phys_prior
+    return c_prior + k_prior + x0_prior
 
 # data likelihood
-def data_like(model, batch):
-    t, x = batch
-    v_model = vmap(eqx.combine(init_theta, static))
+def data_like(position, batch):
+    theta = position[0]
+    vphi = vmap(eqx.combine(theta, static))
+    # Not really sure why I have to specify batch like this, fix this
+    t, x = batch[0]
+    N = len(x)
+    # square residual loss (0.05 is the data std)
+    return -0.5*N*jnp.mean((vphi(t)-x)**2, axis=(0, 1))/(2*0.05)
+
 # physcs likelihood
+def phys_like(position, batch):
+    theta = position[0]
+    N = batch.shape[0]
+    # batch = jnp.squeeze(batch)
+    print(batch.shape)
+    phys_params = position[1]
+    c = jnp.exp(phys_params[0])
+    k = jnp.exp(phys_params[1])
+    x0 = jnp.exp(phys_params[2])
+    psi = eqx.combine(theta, static)
+
+    # psi_t = grad(psi, argnums=0)
+    # psi_tt = grad(psi_t, argnums=0)
+    # phys_pred = lambda t: 1/k * psi_tt(t) + c/k * psi_t(t) + psi(t) - x0
+    # vphys_pred = vmap(phys_pred)(batch)
+    # print(vphys_pred.shape)
+    vpsi = vmap(psi)
+    vpsi_t = vmap(grad(vpsi, argnums=0))
+    vpsi_tt = vmap(grad(grad(psi, argnums=0)))
+    phys_pred = 1/k * vpsi_tt(batch) + c/k * vpsi_t(batch) + vpsi(batch) - x0
+    # phys_pred = smd_dynamics(batch, psi, (c, k, x0))
+    return - 0.5*(N**2)*(jnp.mean(phys_pred**2)/(0.05**2))
 
 # Bayes' rule (additive)
 @eqx.filter_jit
-def log_prob(model_dff, batch):
-    return param_prior(key) + data_like(init_theta, batch.data)
+def log_prob(position, batch):
+    bayes = (mlp_prior(position)
+            + phys_prior(position)
+            + data_like(position, batch.data)
+            + phys_like(position, batch.collocation)
+            )
+    
+    return bayes
 
 
-## DEFINE SAMPLING FUNCTION - SGLD?
+## DEFINE SAMPLING FUNCTION - SGLD
 def run_sgld(log_prob, dataloader, key):
 
     key, subkey = jr.split(key)
@@ -143,11 +181,13 @@ def run_sgld(log_prob, dataloader, key):
         return jtu.tree_map(partial(jnp.clip, a_min=-1e4, a_max=1e4), g)
     
     sgld = blackjax.sgld(grad_estimate)
-    position = sgld.init(init_theta)
+    init_state = (theta_init, phys_init)
+    position = sgld.init(init_state)
     temperature = 1.0
-    sgld_step = jit(sgld.step)
+    sgld_step = eqx.filter_jit(sgld.step)
     init = (0, position, subkey)
 
+    @eqx.filter_jit
     def sgld_update(carry, x):
         """One step of SGLD."""
         i, position, key = carry
@@ -160,14 +200,13 @@ def run_sgld(log_prob, dataloader, key):
     return sgld_update, init
 
 key, subkey = jr.split(jr.PRNGKey(0))
-print(subkey.shape)
 max_iter = 1000
 thinning_factor = 10
 
-posterior_sgld_scan, init = run_sgld(log_prob, 
-                                     partial(sample_collocation, batch_size=1),
-                                     subkey)
-_, posterior_samples = lax.scan(posterior_sgld_scan, init, None, length=max_iter)
+post_sgld_scan, init = run_sgld(log_prob, 
+                                partial(dataloader, data_size=10, colloc_size=10), 
+                                subkey)
+_, posterior_samples = lax.scan(post_sgld_scan, init, None, length=max_iter)
 posterior_samples = jtu.tree_map(lambda x: x[::thinning_factor], posterior_samples)
 
 print('Posterior Samples Taken!')
