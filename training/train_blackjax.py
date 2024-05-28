@@ -29,15 +29,15 @@ import blackjax
 
 from bpinns.dynamics import smd_dynamics
 from preprocessing.process_covid import process_covid_data
-import bpinns.numpyro_models as models
 
 ## Hyperparameters
 width = 32
 depth = 2
 num_collocation = 1000
 num_chains = 1
-num_warmup = 1000
-num_samples = 1000
+burn = 1000
+max_iter = 2000
+thinning_factor = 10
 
 # Model Parameters
 phys_std = 0.05
@@ -97,6 +97,7 @@ mlp = eqx.nn.MLP(in_size=s_train_t.shape[1],
 
 # here is where we would add Fourier features
 model = mlp
+print(model)
 
 theta_init, static = eqx.partition(model, eqx.is_array)
 
@@ -134,25 +135,15 @@ def data_like(position, batch):
 # physcs likelihood - this is where my current bug is
 def phys_like(position, batch):
     theta = position[0]
-    N = batch.shape[0]
-    # batch = jnp.squeeze(batch)
-    print(batch.shape)
     phys_params = position[1]
+    N = batch.shape[0]
     c = jnp.exp(phys_params[0])
     k = jnp.exp(phys_params[1])
     x0 = jnp.exp(phys_params[2])
     psi = eqx.combine(theta, static)
 
-    # psi_t = grad(psi, argnums=0)
-    # psi_tt = grad(psi_t, argnums=0)
-    # phys_pred = lambda t: 1/k * psi_tt(t) + c/k * psi_t(t) + psi(t) - x0
-    # vphys_pred = vmap(phys_pred)(batch)
-    # print(vphys_pred.shape)
-    vpsi = vmap(psi)
-    vpsi_t = vmap(grad(vpsi, argnums=0))
-    vpsi_tt = vmap(grad(grad(psi, argnums=0)))
-    phys_pred = 1/k * vpsi_tt(batch) + c/k * vpsi_t(batch) + vpsi(batch) - x0
-    # phys_pred = smd_dynamics(batch, psi, (c, k, x0))
+    phys_pred = smd_dynamics(batch, psi, (c, k, x0))
+    
     return - 0.5*(N**2)*(jnp.mean(phys_pred**2)/(0.05**2))
 
 # Bayes' rule (additive)
@@ -200,15 +191,13 @@ def run_sgld(log_prob, dataloader, key):
 
 # Set SGLD hyperparams
 key, subkey = jr.split(jr.PRNGKey(0))
-max_iter = 1000
-thinning_factor = 10
 
 # Run SGLD
 post_sgld_scan, init = run_sgld(log_prob, 
                                 partial(dataloader, data_size=10, colloc_size=10), 
                                 subkey)
-_, posterior_samples = lax.scan(post_sgld_scan, init, None, length=max_iter)
-posterior_samples = jtu.tree_map(lambda x: x[::thinning_factor], posterior_samples)
+_, sgld_samples = lax.scan(post_sgld_scan, init, None, length=max_iter)
+posterior_samples = jtu.tree_map(lambda x: x[burn::thinning_factor], sgld_samples)
 
 print('Posterior Samples Taken!')
 
@@ -222,3 +211,36 @@ with open('results/blackjax_samples.pkl', 'wb') as f:
     pickle.dump(posterior_samples, f)
 
 print('Saved hyperparameters and samples to results/')
+
+## Temporary Testing
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+net_post, phys_post = posterior_samples
+def eval_ensemble(diff, static_model, t):
+    pinn = eqx.combine(diff, static_model)
+    return pinn(t)
+
+# Need to separate the samples from each other
+# print(net_post)
+# Only the initial physics params are showing, rest are NaNs
+# print(phys_post)
+print(jnp.shape(s_train_t))
+print(net_post)
+post_predictive = vmap(eval_ensemble, (None, None, 0), 1)(net_post, static, s_train_t)
+# posterior quantiles
+pinn_05, pinn_50, pinn_95 = \
+    jnp.quantile(
+        post_predictive, 
+        jnp.array([0.05, 0.5, 0.95]), 
+        axis=0
+    )
+
+fig, ax = plt.subplots(figsize=(3, 2), dpi=150)
+ax.plot(post_predictive, alpha=0.4, lw=0.2)
+ax.set(xlabel=r'Iteration $\times 10^{}$'.format(int(jnp.round(jnp.log10(thinning_factor)))), ylabel=r'$\theta_i$', title='Posterior samples (trace plot)')
+ax.axvline(burn, ls='--', color='k', lw=1)
+x0, x1 = ax.get_xlim()
+y0, y1 = ax.get_ylim()
+ax.annotate('End of warmup period', xy=(burn + 0.01*(x1 - x0), y0 + 0.9*(y1 - y0)), xycoords='data', fontsize=6)
+sns.despine(trim=True);
