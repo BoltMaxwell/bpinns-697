@@ -97,7 +97,6 @@ mlp = eqx.nn.MLP(in_size=s_train_t.shape[1],
 
 # here is where we would add Fourier features
 model = mlp
-print(model)
 
 theta_init, static = eqx.partition(model, eqx.is_array)
 
@@ -217,6 +216,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 net_post, phys_post = posterior_samples
+
+@eqx.filter_vmap(in_axes = (eqx.if_array(0), None, None))
 def eval_ensemble(diff, static_model, t):
     pinn = eqx.combine(diff, static_model)
     return pinn(t)
@@ -226,7 +227,7 @@ def eval_ensemble(diff, static_model, t):
 # Only the initial physics params are showing, rest are NaNs
 # print(phys_post)
 print(jnp.shape(s_train_t))
-print(net_post)
+
 post_predictive = vmap(eval_ensemble, (None, None, 0), 1)(net_post, static, s_train_t)
 # posterior quantiles
 pinn_05, pinn_50, pinn_95 = \
@@ -243,4 +244,5 @@ ax.axvline(burn, ls='--', color='k', lw=1)
 x0, x1 = ax.get_xlim()
 y0, y1 = ax.get_ylim()
 ax.annotate('End of warmup period', xy=(burn + 0.01*(x1 - x0), y0 + 0.9*(y1 - y0)), xycoords='data', fontsize=6)
-sns.despine(trim=True);
+sns.despine(trim=True)
+plt.show()
