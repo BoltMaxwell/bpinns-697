@@ -20,7 +20,8 @@ from preprocessing.process_covid import process_covid_data
 import bpinns.numpyro_models as models
 
 ## Hyperparameters
-width = 32
+# Make sure first layer matches input size, and last layer output size.
+layers = [1, 32, 32, 1]
 num_collocation = 1000
 num_chains = 1
 num_warmup = 100
@@ -63,7 +64,7 @@ samples = models.run_NUTS(models.bpinn,
                       s_train_x,
                       num_collocation,
                       smd_dynamics, 
-                      width, 
+                      layers, 
                       prior_params,
                       likelihood_params,
                       num_chains=num_chains, 
@@ -71,7 +72,7 @@ samples = models.run_NUTS(models.bpinn,
                       num_samples=num_samples)
 
 # place the hyperparameters in a dictionary
-hyperparams = {'width': width, 
+hyperparams = {'layers': layers, 
                'num_collocation': num_collocation, 
                'num_chains': num_chains,
                'num_warmup': num_warmup, 

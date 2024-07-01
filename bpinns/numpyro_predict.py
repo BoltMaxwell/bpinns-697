@@ -25,7 +25,7 @@ def bpinn_predict(model,
                   X, 
                   num_collocation, 
                   dynamics, 
-                  width, 
+                  layers, 
                   prior_params, 
                   likelihood_params):
     """
@@ -38,7 +38,7 @@ def bpinn_predict(model,
         X: the input data
         collocation_pts: the collocation points
         dynamics: the dynamics function
-        width: the width of the neural network
+        layers: the size of the neural network
         prior_params: the prior parameters
         likelihood_params: the likelihood parameters
 
@@ -50,7 +50,7 @@ def bpinn_predict(model,
     # note that Y will be sampled in the model because we pass Y=None here
     model_trace = handlers.trace(model).get_trace(X=X, Y=None,
                                                   dynamics=dynamics, 
-                                                  width=width,
+                                                  layers=layers,
                                                   num_collocation=num_collocation,
                                                   prior_params=prior_params,
                                                   likelihood_params=likelihood_params,
@@ -67,7 +67,7 @@ def bpinn_inferPhysics(model,
                   X, 
                   collocation_pts, 
                   dynamics, 
-                  width, 
+                  layers, 
                   prior_params, 
                   likelihood_params,
                   colloc_key):
@@ -81,7 +81,7 @@ def bpinn_inferPhysics(model,
         X: the input data
         collocation_pts: the collocation points
         dynamics: the dynamics function
-        width: the width of the neural network
+        layers: the size of the neural network
         prior_params: the prior parameters
         likelihood_params: the likelihood parameters
 
@@ -96,7 +96,7 @@ def bpinn_inferPhysics(model,
     model_trace = handlers.trace(model).get_trace(X=X, 
                                                   Y=None,
                                                   dynamics=dynamics, 
-                                                  width=width,
+                                                  layers=layers,
                                                   collocation_pts=collocation_pts,
                                                   prior_params=prior_params,
                                                   likelihood_params=likelihood_params,

@@ -34,7 +34,7 @@ log_k = samples['log_k']
 log_x0 = samples['log_x0']
 
 # unpack hyperparameters with dictionary keys
-width = hyperparams[()]['width']
+layers = hyperparams[()]['layers']
 num_collocation = hyperparams[()]['num_collocation']
 num_chains = hyperparams[()]['num_chains']
 num_warmup = hyperparams[()]['num_warmup']
@@ -67,7 +67,7 @@ predictions = vmap(lambda samples, key: infer.bpinn_predict(models.bpinn,
                                                        s_train_t,
                                                        num_collocation,
                                                        smd_dynamics, 
-                                                       width,
+                                                       layers,
                                                        prior_params,
                                                        likelihood_params
                                                        ))(*vmap_args)

@@ -18,7 +18,6 @@ The following folders are included:
 - Implement SGLD in blackjax
 - Add Fourier Features to Equinox model
 - Add HMCECS in numpyro
-- Make numpyro network architecture flexible
 - Add IFT comparison
 - After all this the dynamics should be architecture agnostic
 

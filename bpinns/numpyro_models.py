@@ -16,48 +16,50 @@ import numpyro
 import numpyro.distributions as dist
 from numpyro import handlers
 from numpyro.infer import MCMC, HMC, NUTS
-from jax import vmap
+from jax import vmap, jit, lax
+from typing import List, Tuple
 
 
 def nonlin(x):
     """Applies a tanh nonlinearity to input x."""
     return jax.nn.tanh(x)
 
-def sample_weights(width=32, net_std=2.0):
+def sample_weights(layer_sizes: List[int], net_std: float = 2.0):
+    """Samples weights and biases for a neural network with the given layer sizes."""
+    weights = []
+    biases = []
 
-    w1 = numpyro.sample("w1", dist.Normal(jnp.zeros((1, width)), 
-                                          net_std*jnp.ones((1, width))))
-    b1 = numpyro.sample("b1", dist.Normal(0., net_std), sample_shape=(width,))
-    w2 = numpyro.sample("w2", dist.Normal(jnp.zeros((width, width)), 
-                                          net_std*jnp.ones((width, width))))
-    b2 = numpyro.sample("b2", dist.Normal(0., net_std), sample_shape=(width,))
-    wf = numpyro.sample("wf", dist.Normal(jnp.zeros((width, 1)), 
-                                          net_std*jnp.ones((width, 1))))
-    bf = numpyro.sample("bf", dist.Normal(0., net_std), sample_shape=(1,))
+    for i in range(len(layer_sizes) - 1):
+        in_size = layer_sizes[i]
+        out_size = layer_sizes[i + 1]
 
-    return w1, b1, w2, b2, wf, bf
+        w = numpyro.sample(f"w{i+1}", dist.Normal(jnp.zeros((in_size, out_size)), 
+                                                  net_std * jnp.ones((in_size, out_size))))
+        b = numpyro.sample(f"b{i+1}", dist.Normal(0., net_std), sample_shape=(out_size,))
+        weights.append(w)
+        biases.append(b)
 
-def bnn(X, net_params):
+    return weights, biases
+
+def bnn(X, weights, biases):
     """
-    BNN using numpyro. 
+    BNN using numpyro. Takes a list of weights and biases.
     Follows the architecture of the paper from the innit docstring.
     """
-    w1, b1, w2, b2, wf, bf = net_params
+    z = jnp.expand_dims(X, 0)  # Add an extra dimension to X
 
-    # first layer of activations
-    X = jnp.expand_dims(X, 0)  # Add an extra dimension to X
-    z1 = nonlin(jnp.matmul(X, w1) + b1)
-    z2 = nonlin(jnp.matmul(z1, w2) + b2)
-    zf = jnp.matmul(z2, wf) + bf
-    zf = jnp.squeeze(zf)
-
-    return zf
+    for w, b in zip(weights[:-1], biases[:-1]):
+        z = nonlin(jnp.matmul(z, w) + b)
+    
+    z = jnp.matmul(z, weights[-1]) + biases[-1]
+    z = jnp.squeeze(z)
+    return z
 
 def bpinn(X, 
           Y, 
           num_collocation, 
           dynamics, 
-          width, 
+          layers, 
           prior_params, 
           likelihood_params,
           key):
@@ -66,16 +68,10 @@ def bpinn(X,
     c_priorMean, k_priorMean, x0_priorMean, params_std, net_std = prior_params
     data_std, phys_std = likelihood_params
 
-    w1, b1, w2, b2, wf, bf = sample_weights(width=width, net_std=net_std)
-    net_params = (w1, b1, w2, b2, wf, bf)
+    weights, biases = sample_weights(layer_sizes=layers, net_std=net_std)
 
     X = X.squeeze()
-    min_value, max_value = jnp.min(X), jnp.max(X)
-    collocation_pts = jr.uniform(key, (num_collocation,), minval=min_value, maxval=max_value)
-    # collocation_pts = collocation_pts.squeeze()
-
-
-    bnn_partial = partial(bnn, net_params=net_params)
+    bnn_partial = jit(partial(bnn, weights=weights, biases=biases))
     bnn_vmap = vmap(bnn_partial, in_axes=0)
     data_pred = bnn_vmap(X)
 
@@ -83,9 +79,12 @@ def bpinn(X,
     log_c = numpyro.sample("log_c", dist.Normal(c_priorMean, params_std))
     log_k = numpyro.sample("log_k", dist.Normal(k_priorMean, params_std))
     log_x0 = numpyro.sample("log_x0", dist.Normal(x0_priorMean, params_std))
+
     c = jnp.exp(log_c)
     k = jnp.exp(log_k)
     x0 = jnp.exp(log_x0)
+    min_value, max_value = jnp.min(X), jnp.max(X)
+    collocation_pts = jr.uniform(key, (num_collocation,), minval=min_value, maxval=max_value)
     # The BNN is the function that is the 2nd argument to the dynamics function
     phys_pred = dynamics(collocation_pts, bnn_partial, (c, k, x0))
     
@@ -97,8 +96,7 @@ def bpinn(X,
     with numpyro.plate("data", N):
         numpyro.sample("Y", dist.Normal(data_pred, data_std).to_event(1), obs=Y)
 
-    # I think the plate is wrong.
-    # observe physics use numpyro.factor, which is equivalent to multiplying the likelihood
+    # observe physics 
     with numpyro.plate("physics", num_collocation):
         numpyro.sample("phys", dist.Normal(phys_pred, phys_std).to_event(1), obs=0)
 
@@ -110,7 +108,7 @@ def run_NUTS(model,
              Y, 
              num_collocation, 
              dynamics, 
-             width, 
+             layers, 
              prior_params, 
              likelihood_params, 
              num_chains=1, num_warmup=1000, num_samples=1000):
@@ -124,7 +122,7 @@ def run_NUTS(model,
         Y: the output data
         num_collocation: the collocation points for the physics
         dynamics: the dynamics function
-        width: the width of the neural network
+        layers: the size of the neural network
         prior_params: the prior parameters
         likelihood_params: the likelihood parameters
         num_chains: the number of chains to run
@@ -146,7 +144,7 @@ def run_NUTS(model,
              Y, 
              num_collocation, 
              dynamics, 
-             width, 
+             layers, 
              prior_params, 
              likelihood_params,
              colloc_key)
