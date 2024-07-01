@@ -34,10 +34,10 @@ from preprocessing.process_covid import process_covid_data
 width = 32
 depth = 2
 num_collocation = 1000
-num_chains = 1
+num_chains = 10
 burn = 1000
-max_iter = 2000
-thinning_factor = 10
+max_iter = 1_000_000
+thinning_factor = 100
 
 # Model Parameters
 phys_std = 0.05
@@ -45,7 +45,7 @@ data_std = 0.05
 c_priorMean = jnp.log(2.2)
 k_priorMean = jnp.log(350.0)
 x0_priorMean = jnp.log(0.56)
-params_std = 0.5
+params_std = jnp.array(0.5)
 net_std = 2.0
 phys_init = (c_priorMean, k_priorMean, x0_priorMean, params_std)
 likelihood_params = (data_std, phys_std)
@@ -110,28 +110,26 @@ def mlp_prior(position):
 # physics param prior
 def phys_prior(position):
     phys_params = position[1]
-    # this is ugly
-    log_c = phys_params[0]
-    log_k = phys_params[1]
-    log_x0 = phys_params[2]
-    params_std = phys_params[3]
+    log_c, log_k, log_x0, params_std = phys_params
     c_prior = jax.scipy.stats.norm.pdf(log_c, params_std)
     k_prior = jax.scipy.stats.norm.pdf(log_k, params_std)
     x0_prior = jax.scipy.stats.norm.pdf(log_x0, params_std)
 
     return c_prior + k_prior + x0_prior
 
-# data likelihood
+# data likelihood- this is where my current bug is
 def data_like(position, batch):
     theta = position[0]
     vphi = vmap(eqx.combine(theta, static))
     # Not really sure why I have to specify batch like this, fix this
     t, x = batch[0]
     N = len(x)
-    # square residual loss (0.05 is the data std)
-    return -0.5*N*jnp.mean((vphi(t)-x)**2, axis=(0, 1))/(2*0.05)
+    # data_res = - 0.5*N*jnp.mean((vphi(t)-x)**2)/(data_std**2)
+    # data_res = 1/(jnp.sqrt(2*jnp.pi)*data_std)*jnp.exp(-jnp.mean(vphi(t)-x)**2/2*data_std**2)
+    data_res = jax.scipy.stats.norm.pdf(jnp.mean(vphi(t)-x), data_std)
+    return data_res
 
-# physcs likelihood - this is where my current bug is
+# physcs likelihood 
 def phys_like(position, batch):
     theta = position[0]
     phys_params = position[1]
@@ -139,11 +137,14 @@ def phys_like(position, batch):
     c = jnp.exp(phys_params[0])
     k = jnp.exp(phys_params[1])
     x0 = jnp.exp(phys_params[2])
+
     psi = eqx.combine(theta, static)
 
     phys_pred = smd_dynamics(batch, psi, (c, k, x0))
-    
-    return - 0.5*(N**2)*(jnp.mean(phys_pred**2)/(0.05**2))
+    # NOTE: There is a leading negative in this residual giving me NaNs
+    # phys_res = -(0.5)*N*jnp.mean(phys_pred**2)/(phys_std**2)
+    phys_res = 1/(jnp.sqrt(2*jnp.pi)*0.05)*jnp.exp(-jnp.mean(phys_pred)**2/2*phys_std**2)
+    return phys_res
 
 # Bayes' rule (additive)
 @eqx.filter_jit
@@ -222,22 +223,18 @@ def eval_ensemble(diff, static_model, t):
     pinn = eqx.combine(diff, static_model)
     return pinn(t)
 
-# Need to separate the samples from each other
-# print(net_post)
-# Only the initial physics params are showing, rest are NaNs
-# print(phys_post)
-print(jnp.shape(s_train_t))
-
 post_predictive = vmap(eval_ensemble, (None, None, 0), 1)(net_post, static, s_train_t)
 # posterior quantiles
-pinn_05, pinn_50, pinn_95 = \
+pinn_025, pinn_50, pinn_975 = \
     jnp.quantile(
         post_predictive, 
-        jnp.array([0.05, 0.5, 0.95]), 
+        jnp.array([0.025, 0.5, 0.975]), 
         axis=0
-    )
+    ) * train_x_std + train_x_mean
+print(f'We have {jnp.count_nonzero(jnp.isnan(pinn_50))} NaNs!')
+print(post_predictive.shape)
 
-fig, ax = plt.subplots(figsize=(3, 2), dpi=150)
+fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
 ax.plot(post_predictive, alpha=0.4, lw=0.2)
 ax.set(xlabel=r'Iteration $\times 10^{}$'.format(int(jnp.round(jnp.log10(thinning_factor)))), ylabel=r'$\theta_i$', title='Posterior samples (trace plot)')
 ax.axvline(burn, ls='--', color='k', lw=1)
@@ -246,3 +243,17 @@ y0, y1 = ax.get_ylim()
 ax.annotate('End of warmup period', xy=(burn + 0.01*(x1 - x0), y0 + 0.9*(y1 - y0)), xycoords='data', fontsize=6)
 sns.despine(trim=True)
 plt.show()
+
+train_t = jnp.squeeze(train_t)
+
+fig, ax = plt.subplots(figsize=(3, 2), dpi=150)
+plt.plot(train_t, train_x, 'ro', label='Data')
+plt.plot(train_t, smooth_cases, 'g-', label='Smoothed Data')
+plt.plot(train_t, pinn_50, 'b-', label='Prediction')
+plt.fill_between(train_t, pinn_025, pinn_975, color='b', alpha=0.2)
+plt.xlabel('Time (days)')
+plt.ylabel('Cases')
+plt.legend()
+plt.title('B-PINN posterior median found with SGLD')
+plt.show()
+

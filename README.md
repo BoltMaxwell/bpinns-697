@@ -15,13 +15,12 @@ The following folders are included:
 
 
 ## TODO:
-- Fix numpyro collocation scheme
 - Implement SGLD in blackjax
 - Add Fourier Features to Equinox model
 - Add HMCECS in numpyro
 - Make numpyro network architecture flexible
 - Add IFT comparison
-- After all this the dynamics should be architecture agnostics
+- After all this the dynamics should be architecture agnostic
 
 ## Paper References
 - https://www.sciencedirect.com/science/article/pii/S0045782522004327?fr=RR-2&ref=pdf_download&rr=87dbe30d5c0de241

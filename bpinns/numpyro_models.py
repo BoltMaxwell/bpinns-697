@@ -11,6 +11,7 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
+import jax.random as jr
 import numpyro
 import numpyro.distributions as dist
 from numpyro import handlers
@@ -54,13 +55,14 @@ def bnn(X, net_params):
 
 def bpinn(X, 
           Y, 
-          collocation_pts, 
-          dynamics, width, 
+          num_collocation, 
+          dynamics, 
+          width, 
           prior_params, 
-          likelihood_params):
+          likelihood_params,
+          key):
 
     N = X.shape[0]
-    num_collocation = collocation_pts.shape[0]
     c_priorMean, k_priorMean, x0_priorMean, params_std, net_std = prior_params
     data_std, phys_std = likelihood_params
 
@@ -68,7 +70,10 @@ def bpinn(X,
     net_params = (w1, b1, w2, b2, wf, bf)
 
     X = X.squeeze()
-    collocation_pts = collocation_pts.squeeze()
+    min_value, max_value = jnp.min(X), jnp.max(X)
+    collocation_pts = jr.uniform(key, (num_collocation,), minval=min_value, maxval=max_value)
+    # collocation_pts = collocation_pts.squeeze()
+
 
     bnn_partial = partial(bnn, net_params=net_params)
     bnn_vmap = vmap(bnn_partial, in_axes=0)
@@ -81,7 +86,7 @@ def bpinn(X,
     c = jnp.exp(log_c)
     k = jnp.exp(log_k)
     x0 = jnp.exp(log_x0)
-    # The BNN is the function that is the second argument to the dynamics function
+    # The BNN is the function that is the 2nd argument to the dynamics function
     phys_pred = dynamics(collocation_pts, bnn_partial, (c, k, x0))
     
     # add dimension to data_pred
@@ -103,7 +108,7 @@ def run_NUTS(model,
              rng_key, 
              X, 
              Y, 
-             collocation_pts, 
+             num_collocation, 
              dynamics, 
              width, 
              prior_params, 
@@ -117,7 +122,7 @@ def run_NUTS(model,
         rng_key: the random key
         X: the input data
         Y: the output data
-        collocation_pts: the collocation points for the physics
+        num_collocation: the collocation points for the physics
         dynamics: the dynamics function
         width: the width of the neural network
         prior_params: the prior parameters
@@ -135,6 +140,16 @@ def run_NUTS(model,
         num_chains=num_chains,
         progress_bar=False if "NUMPYRO_SPHINXBUILD" in os.environ else True,
     )
-    mcmc.run(rng_key, X, Y, collocation_pts, dynamics, width, prior_params, likelihood_params)
+    mcmc_key, colloc_key = jr.split(rng_key)
+    mcmc.run(mcmc_key, 
+             X, 
+             Y, 
+             num_collocation, 
+             dynamics, 
+             width, 
+             prior_params, 
+             likelihood_params,
+             colloc_key)
+    
     print("\nMCMC elapsed time:", time.time() - start)
     return mcmc.get_samples()

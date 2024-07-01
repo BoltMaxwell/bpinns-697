@@ -23,7 +23,7 @@ def bpinn_predict(model,
                   rng_key, 
                   samples,
                   X, 
-                  collocation_pts, 
+                  num_collocation, 
                   dynamics, 
                   width, 
                   prior_params, 
@@ -45,14 +45,17 @@ def bpinn_predict(model,
     Returns:
         Y: the predicted output
     """
-    model = handlers.substitute(handlers.seed(model, rng_key), samples)
+    predict_key, colloc_key = jax.random.split(rng_key)
+    model = handlers.substitute(handlers.seed(model, predict_key), samples)
     # note that Y will be sampled in the model because we pass Y=None here
     model_trace = handlers.trace(model).get_trace(X=X, Y=None,
                                                   dynamics=dynamics, 
                                                   width=width,
-                                                  collocation_pts=collocation_pts,
+                                                  num_collocation=num_collocation,
                                                   prior_params=prior_params,
-                                                  likelihood_params=likelihood_params)
+                                                  likelihood_params=likelihood_params,
+                                                  key=colloc_key
+                                                  )
 
     ## I THNK WE WILL ADD LINES HERE TO SAMPLE THE PHYSICS PARAMETERS
     return model_trace["Y"]["value"]
@@ -66,7 +69,8 @@ def bpinn_inferPhysics(model,
                   dynamics, 
                   width, 
                   prior_params, 
-                  likelihood_params):
+                  likelihood_params,
+                  colloc_key):
     """
     Returns the inferred physics parameters from the posterior.
 
@@ -86,7 +90,8 @@ def bpinn_inferPhysics(model,
         k: the inferred k parameter
         x0: the inferred x0 parameter
     """
-    model = handlers.substitute(handlers.seed(model, rng_key), samples)
+    predict_key, colloc_key = jax.random.split(rng_key)
+    model = handlers.substitute(handlers.seed(model, predict_key), samples)
     # note that Y will be sampled in the model because we pass Y=None here
     model_trace = handlers.trace(model).get_trace(X=X, 
                                                   Y=None,
@@ -94,6 +99,7 @@ def bpinn_inferPhysics(model,
                                                   width=width,
                                                   collocation_pts=collocation_pts,
                                                   prior_params=prior_params,
-                                                  likelihood_params=likelihood_params)
+                                                  likelihood_params=likelihood_params,
+                                                  key=colloc_key)
 
     return model_trace["log_c"]["value"]

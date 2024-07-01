@@ -9,7 +9,6 @@ sys.path.append('.')
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from functools import partial
 import pickle
 
 import jax
@@ -17,8 +16,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import grad, jit, vmap
 import numpyro
-import numpyro.distributions as dist
-import blackjax
 
 from bpinns.dynamics import smd_dynamics
 from preprocessing.process_covid import process_covid_data
@@ -26,9 +23,9 @@ import bpinns.numpyro_models as models
 import bpinns.numpyro_predict as infer
 
 ## Hyperparameters
-hyperparams = np.load('results/model_hyperparams.npy', allow_pickle=True)
+hyperparams = np.load('results/numpyro_hyperparams.npy', allow_pickle=True)
 
-with open('results/samples.pkl', 'rb') as f:
+with open('results/numpyro_samples.pkl', 'rb') as f:
     samples = pickle.load(f)
 
 print(samples.keys())
@@ -54,13 +51,12 @@ time, cases, smooth_cases = process_covid_data(data, start_day, end_day)
 # ONCE OPERATIONAL: WE WILL SPLIT TO TRAIN AND TEST
 train_t = time
 train_x = cases
-collocation_pts = jnp.linspace(min(train_t), max(train_t), num_collocation)
-# normalize 
+
+# Normalize 
 s_train_t = train_t / jnp.max(train_t)
 train_x_mean = jnp.mean(train_x)
 train_x_std = jnp.std(train_x)
 s_train_x = (train_x - train_x_mean) / train_x_std
-collocation_pts = collocation_pts / jnp.max(train_t)
 
 rng_key_predict, rng_key_infer = jr.split(jr.PRNGKey(0))
 
@@ -69,7 +65,7 @@ predictions = vmap(lambda samples, key: infer.bpinn_predict(models.bpinn,
                                                        key, 
                                                        samples, 
                                                        s_train_t,
-                                                       collocation_pts,
+                                                       num_collocation,
                                                        smd_dynamics, 
                                                        width,
                                                        prior_params,

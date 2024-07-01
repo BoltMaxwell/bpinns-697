@@ -23,8 +23,8 @@ import bpinns.numpyro_models as models
 width = 32
 num_collocation = 1000
 num_chains = 1
-num_warmup = 1000
-num_samples = 1000
+num_warmup = 100
+num_samples = 100
 
 # Model Parameters
 phys_std = 0.05
@@ -47,14 +47,12 @@ time, cases, smooth_cases = process_covid_data(data, start_day, end_day)
 # ONCE OPERATIONAL: WE WILL SPLIT TO TRAIN AND TEST
 train_t = time
 train_x = cases
-collocation_pts = jnp.linspace(min(train_t), max(train_t), num_collocation)
 
 # Normalize 
 s_train_t = train_t / jnp.max(train_t)
 train_x_mean = jnp.mean(train_x)
 train_x_std = jnp.std(train_x)
 s_train_x = (train_x - train_x_mean) / train_x_std
-collocation_pts = collocation_pts / jnp.max(train_t)
 
 rng_key, rng_key_predict = jr.split(jr.PRNGKey(0))
 
@@ -63,7 +61,7 @@ samples = models.run_NUTS(models.bpinn,
                       rng_key, 
                       s_train_t, 
                       s_train_x,
-                      collocation_pts,
+                      num_collocation,
                       smd_dynamics, 
                       width, 
                       prior_params,
