@@ -26,17 +26,19 @@ import equinox as eqx
 from collections import namedtuple
 import blackjax
 
-
 from bpinns.dynamics import smd_dynamics
+from bpinns.fourier import FourierEncoding
 from preprocessing.process_covid import process_covid_data
 
 ## Hyperparameters
+use_ff=True
+num_ff = 64
 width = 32
 depth = 2
 num_collocation = 1000
 num_chains = 10
 burn = 1000
-max_iter = 1_000_000
+max_iter = 100_000
 thinning_factor = 100
 
 # Model Parameters
@@ -88,15 +90,27 @@ def dataloader(data_size, colloc_size, key):
 rng_key, rng_key_predict = jr.split(jr.PRNGKey(0))
 
 # PARAMETRIZE FUNCTION
-mlp = eqx.nn.MLP(in_size=s_train_t.shape[1], 
+if use_ff==True:
+    ff_key, mlp_key = jr.split(rng_key)
+    model = eqx.nn.Sequential([
+        # Not sure if this lambda is the correct approach, have to see if the
+        # parameters get passed for SGLD sampling or if its static.
+        # It also takes significantly longer..
+        eqx.nn.Lambda(FourierEncoding(s_train_t.shape[1], num_ff, ff_key)),
+        eqx.nn.MLP(2*num_ff,
+                   out_size='scalar',
+                   width_size=width,
+                   depth=depth,
+                   activation=jax.nn.tanh,
+                   key=mlp_key)
+    ])
+else:
+    model = eqx.nn.MLP(in_size=s_train_t.shape[1], 
                  out_size='scalar', 
                  width_size=width, 
                  depth=depth, 
                  activation=jax.nn.tanh, 
                  key=rng_key)
-
-# here is where we would add Fourier features
-model = mlp
 
 theta_init, static = eqx.partition(model, eqx.is_array)
 
